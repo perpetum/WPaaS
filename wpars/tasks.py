@@ -1,10 +1,24 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+
 """
     tasks
     ~~~~~
     This file contains all the tasks used by the REST API
     So, all the wpar commands used.
     
-    :copyright: (c) 2013 by Matthieu Isoard
+    :copyright: (c) 2013 by @MIS
 """
 
 
@@ -82,16 +96,24 @@ def build_cmd_line(data):
 
 	return cmd_opts
 
+def _run_cmd(cmd, wait=True):
+	
+	process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	out, err = process.communicate()
+	if err is None or err is "":
+		ret = 0
+	if wait:
+		ret = process.wait()
+	return ret,out,err
+
 @celery.task
 def wpar_mkwpar(name, options):
 	wpar_cmd = ['/usr/sbin/mkwpar', '-n', name]
 	# Let's add more options if needed
 	wpar_cmd += options
 	# Launch the command
-	process = subprocess.Popen(wpar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-	out, err = process.communicate()
-	ret = process.wait()
-	return ret,out,err
+	ret,out,err = _run_cmd(wpar_cmd)
+	return out
 
 @celery.task
 def wpar_check_task(task_id):
@@ -101,75 +123,89 @@ def wpar_check_task(task_id):
 @celery.task
 def wpar_startwpar(name):
 	wpar_cmd = ['/usr/sbin/startwpar', name]
-	process = subprocess.Popen(wpar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-	out, err = process.communicate()
-	ret = process.wait()
-	return ret,out,err
+	ret,out,err = _run_cmd(wpar_cmd)
+	return out
 
 @celery.task
 def wpar_stopwpar(name):
 	wpar_cmd = ['/usr/sbin/stopwpar', name]
-	process = subprocess.Popen(wpar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-	out, err = process.communicate()
-	ret = process.wait()
-	return ret,out,err
+	ret,out,err = _run_cmd(wpar_cmd)
+	return out
 
 @celery.task
 def wpar_rebootwpar(name):
 	wpar_cmd = ['/usr/sbin/rebootwpar', name]
-	process = subprocess.Popen(wpar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-	out, err = process.communicate()
-	ret = process.wait()
-	return ret,out,err
+	ret,out,err = _run_cmd(wpar_cmd)
+	return out
 
 @celery.task
 def wpar_rmwpar(name):
 	wpar_cmd = ['/usr/sbin/rmwpar', name]
-	process = subprocess.Popen(wpar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-	out, err = process.communicate()
-	ret = process.wait()
-	return ret,out,err
+	ret,out,err = _run_cmd(wpar_cmd)
+	return out
 
 @celery.task
 def wpar_restorewpar(name, file):
 	wpar_cmd = ['/usr/sbin/restwpar', '-f', file, name]
-	process = subprocess.Popen(wpar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = process.communicate()
-        ret = process.wait()
-        return ret,out,err
+	ret,out,err = _run_cmd(wpar_cmd)
+	return out
 
 @celery.task
 def wpar_savewpar(name, file):
 	wpar_cmd = ['/usr/bin/savewpar', '-f', file, name]
-	process = subprocess.Popen(wpar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = process.communicate()
-        ret = process.wait()
-        return ret,out,err
+	ret,out,err = _run_cmd(wpar_cmd)
+	return out
 
 @celery.task
 def wpar_migwpar(name, file):
 	wpar_cmd = ['/usr/sbin/migwpar', '-d', file, '-C', name]
-	process = subprocess.Popen(wpar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = process.communicate()
-        ret = process.wait()
-        return ret,out,err
+	ret,out,err = _run_cmd(wpar_cmd)
+	return out
 
 @celery.task
 def wpar_syncwpar(name):
 	wpar_cmd = ['/usr/sbin/syncwpar', name]
-	process = subprocess.Popen(wpar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = process.communicate()
-        ret = process.wait()
-        return ret,out,err
+	ret,out,err = _run_cmd(wpar_cmd)
+	return out
 
 @celery.task
 def wpar_listwpar():
-        wpar_list_cmd = ['/usr/sbin/lswpar','-c']     
-        proc = subprocess.Popen(wpar_list_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return proc.communicate()[0]
+	wpar_list_cmd = ['/usr/sbin/lswpar','-c']     
+	ret,out,err = _run_cmd(wpar_list_cmd)
+	return out
 
 @celery.task
 def wpar_listdetailswpar(wpar_name):
-        wpar_list_cmd = ['/usr/sbin/lswpar','-L', wpar_name]     
-        proc = subprocess.Popen(wpar_list_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return proc.communicate()[0]
+	wpar_list_cmd = ['/usr/sbin/lswpar','-L', wpar_name]     
+	ret,out,err = _run_cmd(wpar_list_cmd)
+	return out
+
+@celery.task
+def host_stats():
+	stat_cmd = ['/usr/bin/lparstat','-i']     
+	ret,out,err = _run_cmd(stat_cmd)
+	return out
+
+@celery.task
+def host_cpustats():
+	proc_cmd = ['/usr/bin/pmlist','-s']
+	ret,out,err = _run_cmd(proc_cmd)
+	return out
+
+@celery.task
+def host_status():
+	status_cmd = ['/home/misoard/wparrip.sh']     
+	ret,out,err = _run_cmd(status_cmd)
+	return out
+
+@celery.task
+def host_shutdown():
+	shutdown_cmd = ['/etc/shutdown']     
+	ret,out,err = _run_cmd(shutdown_cmd)
+	return out
+
+@celery.task
+def host_reboot():
+	reboot_cmd = ['/etc/reboot','now']     
+	ret,out,err = _run_cmd(reboot_cmd)
+	return out

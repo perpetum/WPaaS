@@ -1,11 +1,23 @@
 #!../flask/bin/python
-
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
 """
     tasks
     ~~~~~
     This file is contains the  REST API
     
-    :copyright: (c) 2013 by Matthieu Isoard
+    :copyright: (c) 2013 by @MIS
 """
 
 import os
@@ -15,7 +27,7 @@ import re
 import config
 
 from flask import Flask, jsonify, request, make_response, session, abort, Response
-from tasks import wpar_listwpar, wpar_listdetailswpar, build_cmd_line, wpar_mkwpar, wpar_check_task, wpar_rebootwpar, wpar_rmwpar, wpar_startwpar, wpar_stopwpar, wpar_restorewpar, wpar_savewpar, wpar_migwpar, wpar_syncwpar
+from tasks import host_cpustats, host_status, host_stats, wpar_listwpar, wpar_listdetailswpar, build_cmd_line, wpar_mkwpar, wpar_check_task, wpar_rebootwpar, wpar_rmwpar, wpar_startwpar, wpar_stopwpar, wpar_restorewpar, wpar_savewpar, wpar_migwpar, wpar_syncwpar
 from utils import crossdomain
 
 app = Flask(__name__)
@@ -178,44 +190,60 @@ def _parsewpar_output(result):
 				tmp = data_out.setdefault(main_key, dict())
 				tmp.setdefault(key,value)
 			continue
-		#if network == True or routes == True or fs == True or devexport == True:
-			#Special cases for white space column names!! F... dev guys
-		#	if "Virtual Device" in entry:
-		#		entry = entry.replace("Virtual Device","VirtualDevice")
-		#	if "EXTENSION NAME" in entry:
-		#		entry = entry.replace("EXTENSION NAME","ExtensionName")
-		#	entry = re.sub( '\s+', ' ', entry )
-		#	values = entry.split(' ')
-		#	if header_found == False:
-		#		tmp = data_out.setdefault(main_key, dict())
-		#		data_out[main_key] = dict((el,[]) for el in values)
-		#		header_len = len(values)
-		#		header_found = True
-		#	else:
-		#		while len(values) < header_len:
-		#			values.append("")
-		#		print values
-		#		i=0
-		#		for k, v in data_out[main_key].items():
-		#			data_out[main_key][k].append(values[i])
-		#			i=i+1
-		#	continue
+
 	return data_out
 
-@app.route('/bull/api/wpars/<task_id>', methods = ['GET'])
+"""
+_parse_hostinfo_output
+This function takes a lparstat -i output and
+build a json answer for it.
+"""
+def _parse_hostinfo_output(result):
+	data_out = {}
+	data_list = result.splitlines()
+	for entry in data_list:
+		items = entry.split(':')
+		key, value = items[0], items[1]
+		key = key.rstrip()
+		key = key.replace(' ','_')
+		value = value.lstrip()
+		#print key +"="+value
+		if value == None:
+			value=""
+		data_out.setdefault(key, value)
+	return data_out
+	
+"""
+_parse_hostcpuinfo_output
+This function takes a pmlist -s output and
+build a beautiful :-) json answer for it.
+"""
+def _parse_hostcpuinfo_output(result):
+	data_out = {}
+	reg_exp = re.compile('^(\S+) supports \d+ counters$')
+	found = "unknown"
+	data_list = result.splitlines()
+	for entry in data_list:
+		m = reg_exp.match(entry)
+		if m:
+			found = m.group(1)
+	data_out.setdefault('cpuModel', found)
+	return data_out
+
+@app.route('/wparrip/api/wpars/<task_id>', methods = ['GET'])
 def create_wpar_result(task_id):
 	async_res = wpar_check_task(str(task_id))
 	if async_res.ready() == True:
-                return jsonify(ready=True, val=async_res.get()[0], out=async_res.get()[1], err=async_res.get()[2])
-        else:
-                return jsonify(ready=False)	
+		return jsonify(ready=True, val=async_res.get()[0], out=async_res.get()[1], err=async_res.get()[2])
+	else:
+		return jsonify(ready=False)	
 
-@app.route('/bull/api/wpars/list', defaults={'wpar_name': None},  methods = ['GET'])
-@app.route('/bull/api/wpars/list/<wpar_name>', methods = ['GET'])
+@app.route('/wparrip/api/wpars/list', defaults={'wpar_name': None},  methods = ['GET'])
+@app.route('/wparrip/api/wpars/list/<wpar_name>', methods = ['GET'])
 @crossdomain(origin='*')
 def get_list(wpar_name):
 	"""
-	GET /bull/api/wpars/list
+	GET /wparrip/api/wpars/list
 	"""
 	if wpar_name is None: 
 		data = {}
@@ -226,17 +254,17 @@ def get_list(wpar_name):
 		for wpar in all:
 			values = wpar.split(':') 
 			data.update(dict(zip(header, values)))
-		return jsonify( { 'wpars': data} )
+		return jsonify( { "wpars": [ data ] } )
 	else:
 		all = wpar_listdetailswpar(wpar_name).rstrip()
 		result = _parsewpar_output(all)
-		return jsonify( { 'wpars': result} )
+		return jsonify( { "wpars": result } )
 
-@app.route('/bull/api/wpars/create', methods = ['POST'])
+@app.route('/wparrip/api/wpars/create', methods = ['POST'])
 @crossdomain(origin='*')
 def create_wpar():
 	"""
-	POST /bull/api/wpars/create 
+	POST /wparrip/api/wpars/create 
 	:param json: { "name":"wpar95", "options": {
 	"autostart":<yes|no>,
 	"backupdevice":<path>,
@@ -278,14 +306,14 @@ def create_wpar():
 	wpars.append(wpar)
 
 	resp = make_response(jsonify( { 'wpar': wpar } ), 201)
-	resp.headers['Location'] = "/bull/api/wpars/"+async_res.task_id
+	resp.headers['Location'] = "/wparrip/api/wpars/"+async_res.task_id
 	return resp
 
-@app.route('/bull/api/wpars/<wpar_name>', methods = ['PUT'])
+@app.route('/wparrip/api/wpars/<wpar_name>', methods = ['PUT'])
 @crossdomain(origin='*')
 def update_wpar(wpar_name):
 	"""
-	PUT /bull/api/wpars/<wpar_name>
+	PUT /wparrip/api/wpars/<wpar_name>
 	This API allows to update a wpar.
 	By updating we mean:
 	* Start
@@ -336,22 +364,66 @@ def update_wpar(wpar_name):
 		'done': False
 	}
 	resp = make_response(jsonify( { 'wpar': wpar } ), 201)
-	resp.headers['Location'] = "/bull/api/wpars/"+async_res.task_id
+	resp.headers['Location'] = "/wparrip/api/wpars/"+async_res.task_id
 	return resp
 
-@app.route('/bull/api/wpars/<wpar_name>', methods = ['DELETE'])
+@app.route('/wparrip/api/wpars/<wpar_name>', methods = ['DELETE'])
 @crossdomain(origin='*')
 def delete_wpar(wpar_name):
 	"""
-	DELETE /bull/api/wpars/<wpar_name>
+	DELETE /wparrip/api/wpars/<wpar_name>
 	"""
 	if len(str(wpar_name)) == 0:
 		abort(404)
 	name = str(wpar_name)
 	async_res = wpar_rmwpar.delay( name )
 	resp = make_response(jsonify( { 'state': 'Deleting' } ), 201)
-	resp.headers['Location'] = "/bull/api/wpars/"+async_res.task_id
+	resp.headers['Location'] = "/wparrip/api/wpars/"+async_res.task_id
 	return resp
+
+@app.route('/wparrip/api/host', methods = ['GET'])
+@crossdomain(origin='*')
+def stats_host():
+	"""
+	GET /wparrip/api/host
+	"""
+	
+	result = host_stats()
+	resp = _parse_hostinfo_output(result)
+	
+	result = host_cpustats()
+	cpuresp = _parse_hostcpuinfo_output(result)
+
+	return jsonify( { 'host': { 'stats' : resp, 'cpu' : cpuresp } } )
+
+@app.route('/wparrip/api/host/status', methods = ['GET'])
+@crossdomain(origin='*')
+def status_host():
+	"""
+	GET /wparrip/api/host/status
+	"""
+	result = host_status()	
+	return jsonify( { 'host': result} )
+
+@app.route('/wparrip/api/host/shutdown', methods = ['GET'])
+@crossdomain(origin='*')
+def shutdown_host():
+	"""
+	GET /wparrip/api/host/shutdown
+	"""
+	print "shutdown"
+	result = host_shutdown()
+	return jsonify( { 'host': { 'status': result}} )
+
+@app.route('/wparrip/api/host/reboot', methods = ['GET'])
+@crossdomain(origin='*')
+def reboot_host():
+	"""
+	GET /wparrip/api/host/reboot
+	"""
+	print "reboot"
+	result = host_reboot()
+	return jsonify( { 'host': { 'status': result}} )
 
 @app.errorhandler(404)
 def not_found(error):
