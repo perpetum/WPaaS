@@ -23,6 +23,7 @@ import os
 import random
 import time
 import httplib
+import string
 
 from oslo.config import cfg
 
@@ -32,15 +33,18 @@ from nova import exception
 from nova.image import glance
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import jsonutils
-from nova.openstack.common import log
+from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt import driver
+from nova.virt.wparrip import client
+from nova.virt.wparrip import host
+from nova.virt.wparrip import rest_utils
 
 LOG = logging.getLogger(__name__)
 
 wparrip_opts = [
 	cfg.StrOpt('host_ip',
-			   help='URL for connection to WPAR ReST LPAR host.'),
+			    help='URL for connection to WPAR ReST LPAR host.'),
 	cfg.IntOpt('host_port',
 				default=5000,
 				help='URL port for connection to WPAR ReST LPAR host.'),
@@ -84,18 +88,21 @@ class WparDriver(driver.ComputeDriver):
 		super(WparDriver, self).__init__(virtapi)
 		self._wpar = None
 	
-	LOG.debug(_("wparrip, let's GO!"))
-	# Get the list of LPARs to be used
-	self._host_ip = CONF.wpar.host_ip
-	if not (self._host_ip or CONF.wpar.host_username is None or CONF.wpar.host_password is None):
-		raise Exception(_("Must specify host_ip, "
+		LOG.debug(_("wparrip, let's GO!"))
+		# Get the list of LPARs to be used
+		self._host_ip = CONF.wparrip.host_ip
+		LOG.debug(_("wparrip, CONF OK= %s") % self._host_ip)
+		if not (self._host_ip or CONF.wparrip.host_username is None or CONF.wparrip.host_password is None):
+			raise Exception(_("Must specify host_ip, "
 							  "host_username "
 							  "and host_password to use "
-							  "compute_driver=wpar.WparDriver"))
+							  "compute_driver=wparrip.WparDriver"))
 
-	self._session = WparRIPSession()
-	self._host = host.Host(self._session)
-	self._host_state = None
+		self._session = client.WparRIPSession()
+		LOG.debug(_("wparrip, Session OK"))
+		self._host = host.Host(self._session)
+		LOG.debug(_("wparrip, Host OK"))
+		self._host_state = None
 
 	# FIXME(strus38): review and implement missing parts	
 	@property
@@ -114,14 +121,16 @@ class WparDriver(driver.ComputeDriver):
 	def list_instances(self, inspect=False):
 		"""Return the names of all the instances known to the virtualization layer, as a list."""
 		vms = self._session.list_containers()
+		LOG.debug(_("list_instances %s") % vms)
 		lst_vm_names = []
 		if vms:
-			for wpar in vms.wpars:
-				vm_name = wpar.name
+			for wpar in vms['wpars']:
+				vm_name = wpar['name']
 				lst_vm_names.append(vm_name)
+				LOG.debug(_("Wparrip instance %s") % vm_name)
 		else:
 			LOG.debug(_("WparRIP Error: No WPARs found"))
-
+		
 		LOG.debug(_("Got total of %s instances") % str(len(lst_vm_names)))
 		return lst_vm_names
 
@@ -152,29 +161,31 @@ class WparDriver(driver.ComputeDriver):
 		Num_cpu :	(int) the number of virtual CPUs for the domain
 		Cpu_time :	(int) the CPU time used in nanoseconds
 		"""
+		LOG.debug(_("Wparrip get_info %s") % instance['name'])
 		info = {
 			'max_mem': 0,
 			'mem': 0,
 			'num_cpu': 1,
 			'cpu_time': 0
 		}
+		conn_state = power_state.SHUTDOWN
+		
 		wpar = self._session.inspect_container(instance['name'])
 		if wpar:
-			if wpar.rescontrols.MemoryLimits is not ""
-				info["max_mem"].update(int(wpar.rescontrols.MemoryLimits))
-			if wpar.rescontrols.CPULimits is not ""
-				info["num_cpu"].update(int(wpar.rescontrols.CPULimits))
+			if wpar['rescontrols']['MemoryLimits'] is not "":
+				info['max_mem'].update(string.atoi(wpar['rescontrols']['MemoryLimits'],10))
+			if wpar['rescontrols']['CPULimits'] is not "":
+				info["num_cpu"].update(string.atoi(wpar['rescontrols']['CPULimits'],10))
 				#FIXME to find the right piece of info
 				
-			conn_state = None
-			if wpar.state is "Defined":
+			if wpar['state'] is "Defined":
 				conn_state = power_state.SUSPENDED
-			elif wpar.state is "Stopped":
+			elif wpar['state'] is "Stopped":
 				conn_state = power_state.SHUTDOWN
-			elif wpar.state is "Active":
+			elif wpar['state'] is "Active":
 				conn_state = power_state.RUNNING
 			
-			info['state'] = conn_state
+		info['state'] = conn_state
 		return info
 	
 	#IMPLEMENTED

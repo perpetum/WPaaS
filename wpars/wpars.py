@@ -207,6 +207,7 @@ def _parse_hostinfo_output(result):
 		key = key.rstrip()
 		key = key.replace(' ','_')
 		value = value.lstrip()
+		value = value.replace(' MB','')
 		#print key +"="+value
 		if value == None:
 			value=""

@@ -18,6 +18,7 @@
 
 	:copyright: (c) 2013 by @MIS
 """
+import string
 
 from nova import exception
 from nova.openstack.common.gettextutils import _
@@ -37,7 +38,7 @@ class Host(object):
 
 	def host_power_action(self, host, action):
 		"""Reboots or shuts down the host."""
-		host_mor = vm_util.get_host_ref(self._session)
+		#host_mor = vm_util.get_host_ref(self._session)
 		LOG.debug(_("%(action)s %(host)s"), {'action': action, 'host': host})
 		if action == "reboot":
 			host_task = self._session.reboot_host()
@@ -52,7 +53,7 @@ class Host(object):
 		"""Start/Stop host maintenance window. On start, it triggers
 		guest VMs evacuation.
 		"""
-		host_mor = vm_util.get_host_ref(self._session)
+		#host_mor = vm_util.get_host_ref(self._session)
 		LOG.debug(_("Set maintenance mod on %(host)s to %(mode)s"),
 				  {'host': host, 'mode': mode})
 		#FIX ME
@@ -85,13 +86,16 @@ class HostState(object):
 	def update_status(self):
 		"""Update the current state of the host.
 		"""
-		host_mor = vm_util.get_host_ref(self._session)
-		summary = self._session._make_request('GET','/wparrip/api/host')
+		#host_mor = vm_util.get_host_ref(self._session)
+		resp = self._session._make_request('GET','/wparrip/api/host')
 		if resp.code != 200:
 			return
-
+	
+		summary = resp.json
 		if summary is None:
 			return
+		
+		LOG.debug(_("update_status: %s") % summary['host']['stats']['Online_Memory'])
 		
 		#FIX ME ... WPARs and disk are not best friends... it all depends on
 		# how you create the WPARs...
@@ -104,10 +108,10 @@ class HostState(object):
 		#	 ds = (None, None, 0, 0)
 
 		data = {}
-		data["vcpus"] = summary.host.Online_Virtual_CPUs
+		data["vcpus"] = string.atoi(summary['host']['stats']['Online_Virtual_CPUs'],10)
 		data["cpu_info"] = \
 				{"vendor": "IBM",
-				 "model": summary.host.cpu.cpuModel,
+				 "model": summary['host']['cpu']['cpuModel'],
 				 "topology": {"cores": 4,
 							  "sockets": 2,
 							  "threads": 4}
@@ -115,10 +119,10 @@ class HostState(object):
 		data["disk_total"] = 20000
 		data["disk_available"] = 10000
 		data["disk_used"] = data["disk_total"] - data["disk_available"]
-		data["host_memory_total"] = summary.host.stats.Online_Memory / unit.Mi
+		data["host_memory_total"] = string.atoi(summary['host']['stats']['Online_Memory'],10)
 		#On AIX, the LPAR consumes all the memory, it does not mean
 		# that we cannot allocate a wpar
-		data["host_memory_free"] = summary.host.stats.Online_Memory / unit.Mi
+		data["host_memory_free"] = string.atoi(summary['host']['stats']['Online_Memory'], 10)
 		data["hypervisor_type"] = 'wparrip'
 		data["hypervisor_version"] = '1.0'
 		data["hypervisor_hostname"] = self._host_name

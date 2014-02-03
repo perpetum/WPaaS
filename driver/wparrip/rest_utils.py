@@ -69,6 +69,7 @@ class Response(object):
 			return
 		try:
 			return jsonutils.loads(self.data)
+			#return self.data
 		except ValueError:
 			return
 
