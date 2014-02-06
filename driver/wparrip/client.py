@@ -178,7 +178,8 @@ class WparRIPSession(object):
 					'dev':'' 
 				}, 
 				'network': { 
-					'interface':'', 
+					'interface':'',
+					'address':'', 
 					'ipv4':'', 
 					'netmask':'', 
 					'broadcast':'', 
@@ -193,11 +194,20 @@ class WparRIPSession(object):
 		}
 		
 		data.update(args)
+		LOG.debug(_("wparrip, create_container = %s") % jsonutils.dumps(data))
 		resp = self._make_request('POST','/wparrip/api/wpars/create',body=jsonutils.dumps(data))
 		if resp.code != 201:
-			return
+			raise Exception(_("Cannot create_container %s") % format(resp.code))
+
 		# Read the URI where we have to wait  until complete
-		location = resp.headers['Location']
+		location = resp.header_location
+		LOG.debug(_("wparrip, create_container location = %s") % location)
+		json_res = resp.json
+		if json_res:
+			name = json_res['wpar']['name']
+			options = json_res['wpar']['options']
+			LOG.debug(_("wparrip, create_container name = %s") % name)
+			LOG.debug(_("wparrip, create_container options = %s") % options)
 		
 		# now we have to loop until the wpar is ready...
 		# this can take 3 to 30mn depending on the kind of WPAR  ...
@@ -205,12 +215,20 @@ class WparRIPSession(object):
 		done = False
 		while done == False:
 			resp = self._make_request('GET', location)
-			if resp.code != 200:
-				return
-			if resp.data['state'] == False:
-				time.sleep(5)
-
-		return
+			if resp.code == 200:
+				res = resp.json
+				if res['ready'] == True:
+					if res['val'] != 0:
+						LOG.debug(_("wparrip, create_container ERROR: %s") % res['err'])
+						return None
+					done = True
+				else:
+					LOG.debug(_("wparrip, create_container sleeping"))
+					time.sleep(5)
+			else:
+				return None
+		
+		return name
 
 	def start_container(self, container_id):
 		data = {'name':container_id, 'state':'start'}
@@ -222,7 +240,7 @@ class WparRIPSession(object):
 		resp= self._make_request('PUT','/wparrip/api/wpars/{0}'.format(container_id), body=jsonutils.dumps(data))
 		return (resp.code == 201)
 
-	def inspect_container(self, container_name):
+	def inspect_container(self, container_id):
 		resp = self._make_request('GET','/wparrip/api/wpars/list/{0}'.format(container_id))
 		if resp.code != 200:
 			return
@@ -235,6 +253,29 @@ class WparRIPSession(object):
 
 	def destroy_container(self, container_id):
 		resp = self._make_request('DELETE','/wparrip/api/wpars/{0}'.format(container_id))
-		return (resp.code == 201)
+		if resp.code != 201:
+			return False,format(resp.code)
+		
+		# Read the URI where we have to wait  until complete
+		location = resp.header_location
+		LOG.debug(_("wparrip, destroy_container location = %s") % location)
+		
+		done = False
+		while done == False:
+			resp = self._make_request('GET', location)
+			if resp.code == 200:
+				res = resp.json
+				if res['ready'] == True:
+					done = True
+					if res['val'] == 1:
+						LOG.debug(_("wparrip, destroy_container ERROR: %s") % res['err'])
+						return False,instance['hostname']
+				else:
+					LOG.debug(_("wparrip, destroy_container sleeping"))
+					time.sleep(5)
+			else:
+				return False,format(resp.code)
+		
+		return True,None
 
 	

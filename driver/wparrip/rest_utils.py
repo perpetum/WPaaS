@@ -59,7 +59,8 @@ class Response(object):
 		self.code = int(http_response.status)
 		self.data = http_response.read()
 		self.json = self._decode_json(self.data)
-
+		self.header_location = http_response.getheader('Location')
+		
 	def read(self, size=None):
 		return self._response.read(size)
 		

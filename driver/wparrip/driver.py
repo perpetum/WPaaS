@@ -24,6 +24,7 @@ import random
 import time
 import httplib
 import string
+import re
 
 from oslo.config import cfg
 
@@ -39,6 +40,7 @@ from nova.virt import driver
 from nova.virt.wparrip import client
 from nova.virt.wparrip import host
 from nova.virt.wparrip import rest_utils
+from nova.virt.wparrip import network
 
 LOG = logging.getLogger(__name__)
 
@@ -125,9 +127,10 @@ class WparDriver(driver.ComputeDriver):
 		lst_vm_names = []
 		if vms:
 			for wpar in vms['wpars']:
-				vm_name = wpar['name']
-				lst_vm_names.append(vm_name)
-				LOG.debug(_("Wparrip instance %s") % vm_name)
+				if 'name' in wpar:
+					vm_name = wpar['name']
+					lst_vm_names.append(vm_name)
+					LOG.debug(_("Wparrip instance %s") % vm_name)
 		else:
 			LOG.debug(_("WparRIP Error: No WPARs found"))
 		
@@ -161,31 +164,48 @@ class WparDriver(driver.ComputeDriver):
 		Num_cpu :	(int) the number of virtual CPUs for the domain
 		Cpu_time :	(int) the CPU time used in nanoseconds
 		"""
-		LOG.debug(_("Wparrip get_info %s") % instance['name'])
+		LOG.debug(_("Wparrip get_info %s") % instance['hostname'])
 		info = {
 			'max_mem': 0,
 			'mem': 0,
 			'num_cpu': 1,
-			'cpu_time': 0
+			'cpu_time': 0,
+			'state': power_state.SHUTDOWN
 		}
 		conn_state = power_state.SHUTDOWN
-		
-		wpar = self._session.inspect_container(instance['name'])
+		wpar = self._session.inspect_container(instance['hostname'])
+		LOG.debug(_("WparRIP get_info wpar=%s") % wpar)
 		if wpar:
-			if wpar['rescontrols']['MemoryLimits'] is not "":
-				info['max_mem'].update(string.atoi(wpar['rescontrols']['MemoryLimits'],10))
-			if wpar['rescontrols']['CPULimits'] is not "":
-				info["num_cpu"].update(string.atoi(wpar['rescontrols']['CPULimits'],10))
+			reg_exp=re.compile('^(\d+)\%-(\d+)\%,(\d+)\%$')
+			max_v = 100
+			host_stats = self.get_host_stats(refresh=False)
+			if wpar['wpars']['rescontrols']['MemoryLimits'] != "":
+				# Memory limit forat is weird: "0%-100%,100%", so let's put it otherwise
+				# Take the 'host_memory_free' and apply percentages
+				m = reg_exp.match(wpar['wpars']['rescontrols']['MemoryLimits'])
+				if m:
+					min_v = m.group(1)
+					max_v = m.group(2)
+			info['max_mem'] = host_stats['host_memory_total']
+			if wpar['wpars']['rescontrols']['CPULimits'] != "":
+				# CPU limit is weird too:  "0%-100%,100%", so let's put it otherwise
+				# Take the host 'vcpus' and apply percentages
+				m = reg_exp.match(wpar['wpars']['rescontrols']['CPULimits'])
+				if m:
+					min_v = m.group(1)
+					max_v = m.group(2)
+				info["num_cpu"] = host_stats['vcpus']
 				#FIXME to find the right piece of info
 				
-			if wpar['state'] is "Defined":
+			if wpar['wpars']['state'] == "Defined":
 				conn_state = power_state.SUSPENDED
-			elif wpar['state'] is "Stopped":
+			elif wpar['wpars']['state'] == "Stopped":
 				conn_state = power_state.SHUTDOWN
-			elif wpar['state'] is "Active":
+			elif wpar['wpars']['state'] == "Active":
 				conn_state = power_state.RUNNING
 			
 		info['state'] = conn_state
+		LOG.debug(_("WparRIP get_info info=%s") % info)
 		return info
 	
 	#IMPLEMENTED
@@ -234,15 +254,33 @@ class WparDriver(driver.ComputeDriver):
 		"""Create VM instance."""
 		
 		args = {
-			'name': instance['name'],
-			'password': admin_password,
-			'start': 'yes'
+			'name': instance['hostname'],
+			'options': { 
+				'start': 'yes'
+			}
 		}
+		
+		host_stats = self.get_host_stats(refresh=False)
+		
+		LOG.debug(_("wparrip, spwaning = %s") % instance['hostname'])
+		LOG.debug(_("wparrip, spwaning name-label = %s") % format(instance))
+		LOG.debug(_("wparrip, spwaning network-info = %s") % format(network_info))
+		
+		#Retrieve Network info if any
+		network_info = network_info[0]['network']
+		_network = network.WparNetwork(network_info)
+		if _network.network_info != None:
+			argsnetwork = { 'network': 
+				{ 'address': _network.network_info['ip'],
+					'netmask': _network.network_info['netmask'],
+					'interface': host_stats['network'][0]
+				}
+			}
+			args['options'].update(argsnetwork)
+		
 		container_id = self._session.create_container(args)
-		if not container_name:
-			raise exception.InstanceDeployFailure(
-					_('Cannot deploy WPAR'),
-					instance_id=instance['name'])
+		if not container_id or container_id is None:
+			raise exception.InstanceDeployFailure(_('Cannot deploy WPAR'),instance_id=instance['hostname'])
 
 	#NOT IMPLEMENTED
 	def snapshot(self, context, instance, name, update_task_state):
@@ -253,13 +291,16 @@ class WparDriver(driver.ComputeDriver):
 	def reboot(self, context, instance, network_info, reboot_type,
 			   block_device_info=None, bad_volumes_callback=None):
 		"""Reboot VM instance."""
-		self._session.reboot_container(instance["name"])
+		self._session.reboot_container(instance["hostname"])
 
 	#IMPLEMENTED
 	def destroy(self, context, instance, network_info, block_device_info=None,
 				destroy_disks=True):
 		"""Destroy VM instance."""
-		self._session.destroy_container(instance["name"])
+		result, message = self._session.destroy_container(instance["hostname"])
+		if result == False:
+			raise exception.InstanceTerminationFailure(_('Failed to terminate instance'), reason=message)
+		return result
 
 	#NOT IMPLEMENTED
 	def pause(self, instance):
@@ -276,13 +317,13 @@ class WparDriver(driver.ComputeDriver):
 	#IMPLEMENTED
 	def power_off(self, instance):
 		"""Power off the specified instance."""
-		self._session.stop_container(instance["name"])
+		self._session.stop_container(instance["hostname"])
 	
 	#IMPLEMENTED
 	def power_on(self, context, instance, network_info,
 				 block_device_info=None):
 		"""Power on the specified instance."""
-		self._session.start_container(instance["name"])
+		self._session.start_container(instance["hostname"])
 
 	#NOT IMPLEMENTED
 	def get_console_output(self, instance):

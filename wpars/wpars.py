@@ -27,7 +27,7 @@ import re
 import config
 
 from flask import Flask, jsonify, request, make_response, session, abort, Response
-from tasks import host_cpustats, host_status, host_stats, wpar_listwpar, wpar_listdetailswpar, build_cmd_line, wpar_mkwpar, wpar_check_task, wpar_rebootwpar, wpar_rmwpar, wpar_startwpar, wpar_stopwpar, wpar_restorewpar, wpar_savewpar, wpar_migwpar, wpar_syncwpar
+from tasks import host_network_devices, host_cpustats, host_status, host_stats, wpar_listwpar, wpar_listdetailswpar, build_cmd_line, wpar_mkwpar, wpar_check_task, wpar_rebootwpar, wpar_rmwpar, wpar_startwpar, wpar_stopwpar, wpar_restorewpar, wpar_savewpar, wpar_migwpar, wpar_syncwpar
 from utils import crossdomain
 
 app = Flask(__name__)
@@ -213,7 +213,7 @@ def _parse_hostinfo_output(result):
 			value=""
 		data_out.setdefault(key, value)
 	return data_out
-	
+
 """
 _parse_hostcpuinfo_output
 This function takes a pmlist -s output and
@@ -231,11 +231,23 @@ def _parse_hostcpuinfo_output(result):
 	data_out.setdefault('cpuModel', found)
 	return data_out
 
+def _parse_hostifinfo_output(result):
+	data_out = {}
+	reg_exp = re.compile('^(en\d+) Available\s+Standard Ethernet Network Interface$')
+	ifs = []
+	data_list = result.splitlines()
+	for entry in data_list:
+		m = reg_exp.match(entry)
+		if m:
+			ifs.append(m.group(1))
+	data_out.setdefault('if', ifs)
+	return data_out
+
 @app.route('/wparrip/api/wpars/<task_id>', methods = ['GET'])
-def create_wpar_result(task_id):
+def get_task_result(task_id):
 	async_res = wpar_check_task(str(task_id))
 	if async_res.ready() == True:
-		return jsonify(ready=True, val=async_res.get()[0], out=async_res.get()[1], err=async_res.get()[2])
+		return jsonify(ready=True, task_id=task_id, val=async_res.get()[0], out=async_res.get()[1], err=async_res.get()[2])
 	else:
 		return jsonify(ready=False)	
 
@@ -279,7 +291,7 @@ def create_wpar():
 	"postscript":<path>,
 	"privateRWfs":<yes|no>,
 	"mountdir": { "dir":<path>, "vfs":<namefs|nfs>, "dev":<string> },
-	"network": { "interface":<string>, "ipv4":<string>, "netmask":<string>, "broadcast":<string>, "ipv6":<string>, "prefixlen":<string> },
+	"network": { "address":<ip>, "interface":<string>, "ipv4":<string>, "netmask":<string>, "broadcast":<string>, "ipv6":<string>, "prefixlen":<string> },
 	"password":<string>,
 	"dupnameresolution":<yes|no>,
 	"rootvg":<yes|no>,
@@ -292,7 +304,14 @@ def create_wpar():
 
 	data = request.get_json()
 	name = data['name']
-	options = build_cmd_line(data['options'])
+	print name
+	if 'options' in request.json:
+		print data['options']
+		options = build_cmd_line(data['options'])
+	else:
+		options = {}
+	
+	print options
 	async_res = wpar_mkwpar.delay( name, options )
 	if len(wpars) == 0:
 		id = 0
@@ -394,8 +413,11 @@ def stats_host():
 	
 	result = host_cpustats()
 	cpuresp = _parse_hostcpuinfo_output(result)
-
-	return jsonify( { 'host': { 'stats' : resp, 'cpu' : cpuresp } } )
+	
+	result = host_network_devices()
+	ifstats = _parse_hostifinfo_output(result)
+	
+	return jsonify( { 'host': { 'stats' : resp, 'cpu' : cpuresp , 'network' : ifstats } } )
 
 @app.route('/wparrip/api/host/status', methods = ['GET'])
 @crossdomain(origin='*')

@@ -127,7 +127,8 @@ class HostState(object):
 		data["hypervisor_version"] = '1.0'
 		data["hypervisor_hostname"] = self._host_name
 		data["supported_instances"] = [('POWER', 'wparrip', 'wpar')]
-
+		data["network"] = summary['host']['network']['if']
+		
 		self._stats = data
 		return data
 		
