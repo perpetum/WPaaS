@@ -29,7 +29,9 @@ class WparNetwork(object):
 	"""
 		This class takes the Neutron network info and
 		convert them into usefull information for the wparrip driver
-		FIXME: will have to handle other Network projects
+		FIXME:
+			- Need to handle the cases where the network does not exist on the Host
+			- Need to handle the case where we want to use a specific Host adpater (default to first one)
 	"""
 	def __init__(self, network_info=None):
 		if network_info is None:

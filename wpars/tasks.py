@@ -25,6 +25,7 @@
 import os
 import subprocess
 import config
+import tarfile
 
 from celery import Celery
 from celery.result import AsyncResult
@@ -34,7 +35,7 @@ celery = Celery('tasks', backend=config.BACKEND_URI, broker=config.BROCKER_URI)
 
 def build_cmd_line(data):
 	cmd_opts=[]
-	print data
+
 	if 'password' in data and data['password'] != "":
 		cmd_opts.append('-P')
 		cmd_opts.append(data['password'])
@@ -140,7 +141,6 @@ def wpar_mkwpar(name, options):
 	# Let's add more options if needed
 	wpar_cmd += options
 	# Launch the command
-	print wpar_cmd
 	ret,out,err = _run_cmd(wpar_cmd)
 	return ret,out,err
 
@@ -241,8 +241,48 @@ def host_reboot():
 	return out
 
 @celery.task
+def host_os_stats():
+	os_cmd = ['/usr/bin/oslevel']     
+	ret,out,err = _run_cmd(os_cmd)
+	return out
+
+@celery.task
 def host_network_devices():
 	net_cmd = ['/etc/lsdev','-Cc','if']     
 	ret,out,err = _run_cmd(net_cmd)
 	return out
 
+@celery.task
+def image_inspect(image_fullpath):
+	ls_cmd = ['/usr/bin/lsmksysb','-lf',image_fullpath]
+	ret,out,err = _run_cmd(ls_cmd)
+	return ret,out,err
+
+@celery.task
+def image_create(path, data):
+	files = []
+	# First create the <image_local>/<image_name>.info file. It acts as the image repository locally
+	# to know which images are used by the WPARs (do not want it to be in a DB since it could be used
+	# without this program.)
+	info_file = path+'/'+data['name']+'.info'
+	with open(info_file, 'w') as outfile:
+  		json.dump(data, outfile)
+	
+	# Now, depending on the image, we build a .tgz file containing either:
+	#	- The .info file only
+	#	- The .info file and the mksysb
+	# 	- The .info file and whatever NFS tree or program
+	files.append(data['name']+'.info')
+	if data['type'] == 'mksysb':
+		files.append(data['name'])
+	
+	_targzip_content(files)
+	return 0,data['id'],""
+
+def _targzip_content(path, files):
+	full=path+'/'+data['name']+'.tgz'
+	tar = tarfile.open(full, "w:gz")
+	for name in files:
+		tar.add(path+'/'+name)
+	tar.close()
+	return full

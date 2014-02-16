@@ -41,6 +41,7 @@ from nova.virt.wparrip import client
 from nova.virt.wparrip import host
 from nova.virt.wparrip import rest_utils
 from nova.virt.wparrip import network
+from nova.virt.wparrip import images
 
 LOG = logging.getLogger(__name__)
 
@@ -265,6 +266,7 @@ class WparDriver(driver.ComputeDriver):
 		LOG.debug(_("wparrip, spwaning = %s") % instance['hostname'])
 		LOG.debug(_("wparrip, spwaning name-label = %s") % format(instance))
 		LOG.debug(_("wparrip, spwaning network-info = %s") % format(network_info))
+		LOG.debug(_("wparrip, spwaning image-info = %s") % format(image_meta))
 		
 		#Retrieve Network info if any
 		network_info = network_info[0]['network']
@@ -278,14 +280,22 @@ class WparDriver(driver.ComputeDriver):
 			}
 			args['options'].update(argsnetwork)
 		
+		_image = images.WparImage(image_meta)
+		if _image.image_name != None:
+			# Put the Glance image to the Wparrip server
+			res = self._session.pull_image(_image)
+			if res is None:
+				raise exception.InstanceDeployFailure(_('Cannot pull missing image'),instance_id=instance['hostname'])			
+		
 		container_id = self._session.create_container(args)
 		if not container_id or container_id is None:
-			raise exception.InstanceDeployFailure(_('Cannot deploy WPAR'),instance_id=instance['hostname'])
+			raise exception.InstanceDeployFailure(_('Cannot deploy WPAR ({0})'),instance_id=instance['hostname'])
 
 	#NOT IMPLEMENTED
 	def snapshot(self, context, instance, name, update_task_state):
 		"""Create snapshot from a running VM instance."""
-		pass
+		#Let's say for now it is a savewpar
+		self._session.save_container(instance["hostname"])
 
 	#IMPLEMENTED
 	def reboot(self, context, instance, network_info, reboot_type,
@@ -299,7 +309,7 @@ class WparDriver(driver.ComputeDriver):
 		"""Destroy VM instance."""
 		result, message = self._session.destroy_container(instance["hostname"])
 		if result == False:
-			raise exception.InstanceTerminationFailure(_('Failed to terminate instance'), reason=message)
+			raise exception.InstanceTerminationFailure(_('Failed to terminate instance ({0})'), instance_id=instance['hostname'])
 		return result
 
 	#NOT IMPLEMENTED

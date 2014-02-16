@@ -19,20 +19,41 @@
     
     :copyright: (c) 2013 by @MIS
 """
-
+import logging
 import os
 import subprocess
 import sys
 import re
 import config
+import string
+import time
+import uuid
 
 from flask import Flask, jsonify, request, make_response, session, abort, Response
-from tasks import host_network_devices, host_cpustats, host_status, host_stats, wpar_listwpar, wpar_listdetailswpar, build_cmd_line, wpar_mkwpar, wpar_check_task, wpar_rebootwpar, wpar_rmwpar, wpar_startwpar, wpar_stopwpar, wpar_restorewpar, wpar_savewpar, wpar_migwpar, wpar_syncwpar
+from tasks import image_create, image_inspect, host_network_devices, host_cpustats, host_status, host_stats, wpar_listwpar, wpar_listdetailswpar, build_cmd_line, wpar_mkwpar, wpar_check_task, wpar_rebootwpar, wpar_rmwpar, wpar_startwpar, wpar_stopwpar, wpar_restorewpar, wpar_savewpar, wpar_migwpar, wpar_syncwpar
 from utils import crossdomain
 
 app = Flask(__name__)
 
+numeric_level = logging.DEBUG
+if not isinstance(numeric_level, int):
+    raise ValueError('Invalid log level: %s' % loglevel)
+logging.basicConfig(filename=config.LOGFILE, filemode='w', level=numeric_level, format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
+
 wpars = [ ]
+
+#Initialyze image repositories
+image_local = "/wparrip_images"
+image_remote = "glance"
+if config.IMAGE_REPOSITORY_LOCAL:
+	image_local = config.IMAGE_REPOSITORY_LOCAL
+	if not os.path.exists(image_local):
+		os.makedirs(image_local)
+if config.IMAGE_REPOSITORY_REMOTE:
+	image_remote = config.IMAGE_REPOSITORY_REMOTE
+	if image_remote == "glance":
+		import glance
+	
 
 """
 Function: _parsewpar_output
@@ -65,7 +86,9 @@ def _parsewpar_output(result):
 	reg_kernext=re.compile('^KERNEL EXTENSIONS$')
 	# Extract 2nd line where Name and State are displayed
 	tmp=data_list[1].split('-')
-	print tmp
+	
+	logging.debug('In _parsewpar_output: tmp=%s', tmp)
+	
 	data_out.setdefault('name', tmp[0].rstrip())
 	data_out.setdefault('state', tmp[1].lstrip())
 	for entry in data_list:
@@ -179,14 +202,12 @@ def _parsewpar_output(result):
 			#Special case for multi-line values
 			if (entry.endswith(',') or "PV_" in entry) and not ":" in entry:
 				value=entry
-				#print key +"|"+value
 				data_out[main_key][key] += value
 			else:
 				items = entry.split(':')
         			key, value = items[0], items[1]		
 				if value == None:
 					value=""
-				#print key +"="+value
 				tmp = data_out.setdefault(main_key, dict())
 				tmp.setdefault(key,value)
 			continue
@@ -208,7 +229,6 @@ def _parse_hostinfo_output(result):
 		key = key.replace(' ','_')
 		value = value.lstrip()
 		value = value.replace(' MB','')
-		#print key +"="+value
 		if value == None:
 			value=""
 		data_out.setdefault(key, value)
@@ -243,7 +263,7 @@ def _parse_hostifinfo_output(result):
 	data_out.setdefault('if', ifs)
 	return data_out
 
-@app.route('/wparrip/api/wpars/<task_id>', methods = ['GET'])
+@app.route('/wparrip/api/tasks/<task_id>', methods = ['GET'])
 def get_task_result(task_id):
 	async_res = wpar_check_task(str(task_id))
 	if async_res.ready() == True:
@@ -304,14 +324,15 @@ def create_wpar():
 
 	data = request.get_json()
 	name = data['name']
-	print name
+	
+	logging.debug('In create_wpar: name=%s', name)
+	
 	if 'options' in request.json:
-		print data['options']
+		logging.debug('In create_wpar: options=%s', data['options'])
 		options = build_cmd_line(data['options'])
 	else:
 		options = {}
 	
-	print options
 	async_res = wpar_mkwpar.delay( name, options )
 	if len(wpars) == 0:
 		id = 0
@@ -417,7 +438,9 @@ def stats_host():
 	result = host_network_devices()
 	ifstats = _parse_hostifinfo_output(result)
 	
-	return jsonify( { 'host': { 'stats' : resp, 'cpu' : cpuresp , 'network' : ifstats } } )
+	oslevel = host_os_stats()
+	
+	return jsonify( { 'host': { 'stats' : resp, 'cpu' : cpuresp , 'network' : ifstats, 'oslevel' : oslevel } } )
 
 @app.route('/wparrip/api/host/status', methods = ['GET'])
 @crossdomain(origin='*')
@@ -434,7 +457,7 @@ def shutdown_host():
 	"""
 	GET /wparrip/api/host/shutdown
 	"""
-	print "shutdown"
+	logging.debug('In shutdown_host')
 	result = host_shutdown()
 	return jsonify( { 'host': { 'status': result}} )
 
@@ -444,9 +467,149 @@ def reboot_host():
 	"""
 	GET /wparrip/api/host/reboot
 	"""
-	print "reboot"
+	logging.debug('In reboot_host')
 	result = host_reboot()
 	return jsonify( { 'host': { 'status': result}} )
+
+def _read_image(image_name):
+	try:
+		f = open(image_local+'/'+image_name, "r")
+	except IOError:
+		return None
+	else:
+		with f:
+			obj = json.loads(f.read())
+		return obj
+	
+def _create_image(data):
+	if data['type'] is None:
+		oslevel = host_os_stats()
+		data = {
+			'image' : {
+			'name':data['name'],
+			'id': uuid.uuid4(),
+			'hypervisor': 'warrip',
+			'type':data['type'], 
+			'date': time.strftime("%c"),
+			'oslevel': oslevel,
+			'tl': oslevel,
+			'app': None
+			}
+		}
+	elif data['type'] == "mksysb":
+		data = _inspect_image(data['name'])
+	elif data['type'] == "app":
+		if not data or not 'app':
+			abort(400)
+		oslevel = host_os_stats()
+		data = {
+			'image' : {
+			'name':data['name'],
+			'id': uuid.uuid4(),
+			'hypervisor': 'warrip',
+			'type':data['type'], 
+			'date': time.strftime("%c"),
+			'oslevel': oslevel,
+			'tl': oslevel,
+			'app': data['app']
+			}
+		}
+	async_res = image_create.delay(image_local, data)
+	return async_res
+
+@app.route('/wparrip/api/images/create', methods = ['POST'])
+@crossdomain(origin='*')
+def create_image():
+	"""
+	!DANGER!
+		Well, that where the implement new functions that regular WPARs do not support
+	!DANGER!
+	For WPARs container, we can have several ways of booting them form images:
+		- No images: the wpar is created based on the parent LPAR image
+			- In this case, an image is automatically uploaded in Glance containing an image.info file with the LPAR OS level
+		- mksysb: this is used for Versioned WPARs
+			- In this case, we have to chek that the mksysb fits the requirements, then proceed
+		- <app>: the wpar is an application WPAR, thus only the name of the app to launch needs to be known
+			- In this case, the image will contains an image.info file with the script used to launch the app
+		- PaaS like behavior:
+			- In this case, we need a base to customize. The image.info file contains the customization
+	"""
+	# Handle the first case.
+	data = request.get_json()
+	if not data or not 'name' in data:
+		abort(400)
+	
+	res = _read_image(data['name'])
+	if res is None:
+		async_res = _create_image(data)
+		logging.debug('In create_image imagename=%s',imagename)
+		resp = make_response(jsonify( { 'image': data['name'] } ), 201)
+		resp.headers['Location'] = "/wparrip/api/tasks/"+async_res.task_id
+	else:
+		resp = make_response(jsonify( res ), 200)
+
+	return resp
+
+@app.route('/wparrip/api/images/push', methods = ['POST'])
+@crossdomain(origin='*')
+def image_upload(image_id):
+	"""
+	Given an image_id (uuid format BUT NOT related to the one used by Glance
+	(will see if we would match them later on)), we upload the image to a
+	remote image repository. A remote image repository can be Glance
+	(and it is in this release), or any other in the __future__ (EC3,....)
+	Note: licensing is not an issue (except when mksysb are used for versionned WPARs),
+	and enforcing it is even less my issue... gentlemen, just pay your bills.
+	"""
+	data = request.get_json()
+	
+	glance = glance.GlanceStorage(None)
+	glance.put_content(image_local+'/'+data['name'],None)
+	return
+
+@app.route('/wparrip/api/images/pull', methods = ['POST'])
+@crossdomain(origin='*')
+def image_download(image_id):
+	"""
+	The other way around... we download an image (tgz file for now) coming from
+	Glance. Once the imagedownloaded, it can be used by a WPAR...
+	"""
+	return
+
+def _inspect_image(image_fullpath):
+	result, out = image_inspect(image_fullpath)
+	data = None
+	#Now decode the output
+	if result == 0:
+		""" Here is what the stdout will look like (we do not need VG info):
+		VOLUME GROUP:           rootvg
+		BACKUP DATE/TIME:       Wed Mar 27 23:07:10 CDT 2013
+		UNAME INFO:             AIX nim01 1 7 00F81B111C00
+		BACKUP OSLEVEL:         7.1.2.0
+		MAINTENANCE LEVEL:      7100-00
+		BACKUP SIZE (MB):       24896
+		SHRINK SIZE (MB):       17634
+		VG DATA ONLY:           no
+		"""
+		if out and out != "":
+			data_list = out.splitlines()
+			data = { 'image' : {
+				'name':image_fullpath,
+				'id': uuid.uuid4(),
+				'hypervisor': 'warrip',
+				'type':'mksysb', 
+				'vg': data_list[0].split(":")[1].lstrip(' '),
+				'date': data_list[1].split(":")[1].lstrip(' '),
+				'uname': data_list[2].split(":")[1].lstrip(' '),
+				'oslevel': data_list[3].split(":")[1].lstrip(' '),
+				'tl': data_list[4].split(":")[1].lstrip(' '),
+				'bsize': string.atoi(data_list[5].split(":")[1].lstrip(' ')) * 1024,
+				'ssize': string.atoi(data_list[6].split(":")[1].lstrip(' ')) * 1024,
+				'vgdataonly': data_list[7].split(":")[1].lstrip(' '),
+				'app': None
+				}
+			}
+	return data
 
 @app.errorhandler(404)
 def not_found(error):

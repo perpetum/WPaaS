@@ -36,6 +36,7 @@ from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt import driver
 from nova.virt.wparrip import rest_utils
+from nova.virt.wparrip import images
 
 LOG = logging.getLogger(__name__)
 
@@ -234,6 +235,11 @@ class WparRIPSession(object):
 		data = {'name':container_id, 'state':'start'}
 		resp= self._make_request('PUT','/wparrip/api/wpars/{0}'.format(container_id), body=jsonutils.dumps(data))
 		return (resp.code == 201)
+		
+	def save_container(self, container_id):
+		data = {'name':container_id, 'state':'save', 'file':'tmp/snap'}
+		resp= self._make_request('PUT','/wparrip/api/wpars/{0}'.format(container_id), body=jsonutils.dumps(data))
+		return (resp.code == 201)
 
 	def reboot_container(self, container_id):
 		data = {'name':container_id, 'state':'reboot'}
@@ -278,4 +284,33 @@ class WparRIPSession(object):
 		
 		return True,None
 
+	def pull_image(self, image):
+		data = {
+			image.image_name
+		}
+		LOG.debug(_("wparrip, pull_image = %s") % jsonutils.dumps(data))
+		resp = self._make_request('POST','/wparrip/api/images/create',body=jsonutils.dumps(data))
+		if resp.code != 201 or resp.code != 200:
+			raise Exception(_("Cannot create_container %s") % format(resp.code))
+		
+		if resp.code == 201:
+			location = resp.header_location
+			done = False
+			while done == False:
+				resp = self._make_request('GET',location)
+				if resp.code == 200:
+					res = resp.json
+					if res['ready'] == True:
+						done = True
+						if res['val'] == 1:
+							return False,image.image_name
+					else
+						time.sleep(5)
+				else:
+					return False, format(resp.code)
+			return True, image.image_name
+		elif resp.code == 200:
+			return True, image.image_name
+		else:
+			return False, None
 	
