@@ -1,7 +1,10 @@
-WPaaS
-=====
+WPaaS: WPAR Platform as a Service for POWER platform
+====================================================
 
-WPAR Platform as a Service for POWER platform. <br />
+This project aims to leverage AIX WPAR container so they can be:<br/>
+- Managed with a standard REST interface<br/>
+- Be managed from OpenStack (Havana)</br>
+</br>
 AIX WPAR ReST APIs, incl. Nova driver for OpenStack.<br />
 Glance repository can be used to push images to the WPARRIP hypervisor.<br />
 <br />
