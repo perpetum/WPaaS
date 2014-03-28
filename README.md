@@ -17,28 +17,29 @@ Its goal is to provide ReST APIs to manage the WPARs and
 get some info on the LPAR host.<br />
 
 <h3>Features:</h3>
-	- Spawn a WPAR with Network and Image information<br />
-	- Start a WPAR<br />
-	- Stop a WPAR<br />
-	- Delete a WPAR<br />
+	- Spawn a WPAR with Network and Image information
+	- Start a WPAR
+	- Stop a WPAR
+	- Delete a WPAR
 
 <h3>Status:</h3>
-	- the code works, and a WPAR can be deployed using OpenStack Havana.<br />
+	- the code works, and a WPAR can be deployed using OpenStack Havana.
 
 <h3>TODO List:</h3>
-	- Use the uploaded image so the WPAR can be created/configured with the image<br />
-	- Support other WPAR actions<br />
-	- Attach a volume to a WPAR<br />
-	- VNC connection to the WPAR<br />
+	- Use the uploaded image so the WPAR can be created/configured with the image
+	- Support other WPAR actions
+	- Attach a volume to a WPAR
+	- VNC connection to the WPAR
 <br />
 <h2>Installation process:</h2>
-<b>WPARRIP Hypervisor</b><br />
+<b>WPARRIP Hypervisor:</b><br />
 	- Read the install.sh file and follow the step (it will become a real install script one day…)<br />
 	- Run the env.sh file<br />
-	- Start the Flask server: $ ./wpars.py<br />
+	- Start the Flask server: <br />
+		- ./wpars.py
 <br />
-<b>OpenStack WPARRIP driver</b><br />
-	- Copy the whole driver repository in <openstack>/nova/nova/<br />
+<b>OpenStack WPARRIP driver:</b><br />
+	- Copy the whole driver repository in openstack/nova/nova/<br />
 	- Modify the config file if needed<br />
 	- Restart nova<br />
 <br />
