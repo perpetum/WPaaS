@@ -23,6 +23,7 @@ import os
 import random
 import time
 import httplib
+import requests
 
 from oslo.config import cfg
 
@@ -258,6 +259,7 @@ class WparRIPSession(object):
 		return (resp.code == 201)
 
 	def destroy_container(self, container_id):
+		#return True,None
 		resp = self._make_request('DELETE','/wparrip/api/wpars/{0}'.format(container_id))
 		if resp.code != 201:
 			return False,format(resp.code)
@@ -284,33 +286,41 @@ class WparRIPSession(object):
 		
 		return True,None
 
-	def pull_image(self, image):
-		data = {
-			image.image_name
+	def pull_image(self, image_obj, context, image_href):
+		# Put the Glance image to the Wparrip server
+		readiter = image_obj.get_image_iter(context, image_href)
+		image_size = image_obj.get_image_size(context, image_href)
+		chunks = list(readiter)
+		LOG.debug(_("wparrip, pull_image=%s") % format(image_size))
+		
+		headers = {
+			'Content-Type':'application/octet-stream',
+			'Content-Length': image_size,
+			'Cache-Control': 'no-cache',
+			'X-Meta-Glance-Image-Id': image_href,
+			'Wparrip-Image-format': 'TGZ'
+			#'Content-transfer-encoding': 'binary',
+			#'Transfer-encoding':'chunked',
+			#'Connection': 'Keep-Alive',
 		}
-		LOG.debug(_("wparrip, pull_image = %s") % jsonutils.dumps(data))
-		resp = self._make_request('POST','/wparrip/api/images/create',body=jsonutils.dumps(data))
-		if resp.code != 201 or resp.code != 200:
+		
+		LOG.debug(_("wparrip, pull_image requests header=%s") % headers)
+		
+		# One day, Flask will be able to handle chunked encoding... and we will use this code
+		#def gen():
+		#	for chunk in chunks:
+		#		if chunk:
+		#			yield chunk
+		
+		#resp = requests.post('http://10.197.160.84:5000/wparrip/api/images/pull',data=chunks[0], headers=headers)
+		resp = self._make_request('POST','/wparrip/api/images/pull',body=chunks[0], headers=headers)
+		# One day, Flask will be able to handle chunked encoding... and we will use this code
+		#resp = requests.post('http://10.197.160.84:5000/wparrip/api/images/pull',data=gen(), headers=headers)
+		LOG.debug(_("wparrip, pull_image: mis_request_sent=%s") % resp)
+		#if resp.status_code != 200:
+		if resp.code != 200:
+			#LOG.debug(_("wparrip, pull_image: request_sent=%s") % resp.text)
 			raise Exception(_("Cannot create_container %s") % format(resp.code))
 		
-		if resp.code == 201:
-			location = resp.header_location
-			done = False
-			while done == False:
-				resp = self._make_request('GET',location)
-				if resp.code == 200:
-					res = resp.json
-					if res['ready'] == True:
-						done = True
-						if res['val'] == 1:
-							return False,image.image_name
-					else
-						time.sleep(5)
-				else:
-					return False, format(resp.code)
-			return True, image.image_name
-		elif resp.code == 200:
-			return True, image.image_name
-		else:
-			return False, None
+		return True
 	

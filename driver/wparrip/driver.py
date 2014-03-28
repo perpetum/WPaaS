@@ -180,31 +180,36 @@ class WparDriver(driver.ComputeDriver):
 			reg_exp=re.compile('^(\d+)\%-(\d+)\%,(\d+)\%$')
 			max_v = 100
 			host_stats = self.get_host_stats(refresh=False)
-			if wpar['wpars']['rescontrols']['MemoryLimits'] != "":
-				# Memory limit forat is weird: "0%-100%,100%", so let's put it otherwise
-				# Take the 'host_memory_free' and apply percentages
-				m = reg_exp.match(wpar['wpars']['rescontrols']['MemoryLimits'])
-				if m:
-					min_v = m.group(1)
-					max_v = m.group(2)
 			info['max_mem'] = host_stats['host_memory_total']
-			if wpar['wpars']['rescontrols']['CPULimits'] != "":
-				# CPU limit is weird too:  "0%-100%,100%", so let's put it otherwise
-				# Take the host 'vcpus' and apply percentages
-				m = reg_exp.match(wpar['wpars']['rescontrols']['CPULimits'])
-				if m:
-					min_v = m.group(1)
-					max_v = m.group(2)
-				info["num_cpu"] = host_stats['vcpus']
-				#FIXME to find the right piece of info
-				
-			if wpar['wpars']['state'] == "Defined":
-				conn_state = power_state.SUSPENDED
-			elif wpar['wpars']['state'] == "Stopped":
-				conn_state = power_state.SHUTDOWN
-			elif wpar['wpars']['state'] == "Active":
-				conn_state = power_state.RUNNING
 			
+			if len(wpar['wpars']) >= 1 and wpar['wpars']['rescontrols']:
+				if wpar['wpars']['rescontrols']['MemoryLimits'] != "":
+					# Memory limit forat is weird: "0%-100%,100%", so let's put it otherwise
+					# Take the 'host_memory_free' and apply percentages
+					m = reg_exp.match(wpar['wpars']['rescontrols']['MemoryLimits'])
+					if m:
+						min_v = m.group(1)
+						max_v = m.group(2)
+			
+				if wpar['wpars']['rescontrols']['CPULimits'] != "":
+					# CPU limit is weird too:  "0%-100%,100%", so let's put it otherwise
+					# Take the host 'vcpus' and apply percentages
+					m = reg_exp.match(wpar['wpars']['rescontrols']['CPULimits'])
+					if m:
+						min_v = m.group(1)
+						max_v = m.group(2)
+					info["num_cpu"] = host_stats['vcpus']
+					#FIXME to find the right piece of info
+				
+				if wpar['wpars']['state'] == "Defined":
+					conn_state = power_state.SUSPENDED
+				elif wpar['wpars']['state'] == "Stopped":
+					conn_state = power_state.SHUTDOWN
+				elif wpar['wpars']['state'] == "Active":
+					conn_state = power_state.RUNNING
+			else:
+				conn_state = power_state.SHUTDOWN
+		
 		info['state'] = conn_state
 		LOG.debug(_("WparRIP get_info info=%s") % info)
 		return info
@@ -279,14 +284,24 @@ class WparDriver(driver.ComputeDriver):
 				}
 			}
 			args['options'].update(argsnetwork)
-		
+			
+		#Retrieve Image info if any
 		_image = images.WparImage(image_meta)
 		if _image.image_name != None:
-			# Put the Glance image to the Wparrip server
-			res = self._session.pull_image(_image)
-			if res is None:
-				raise exception.InstanceDeployFailure(_('Cannot pull missing image'),instance_id=instance['hostname'])			
-		
+			LOG.debug(_("wparrip, spwaning image-info2 = %s") % format(_image.get_image_info(context, instance['image_ref'])))
+			
+			res = self._session.pull_image(_image, context, instance['image_ref'])
+			if res is False:
+				raise exception.InstanceDeployFailure(_('Cannot pull missing image'),instance_id=instance['hostname'])
+			
+			argsimage = { 'image': 
+				{ 'file': instance['image_ref'],
+				  'name': _image.image_name
+				}
+			}
+			args.update(argsimage)
+				
+		# Here, we have the right Network, the image on the LPAR hypervisor
 		container_id = self._session.create_container(args)
 		if not container_id or container_id is None:
 			raise exception.InstanceDeployFailure(_('Cannot deploy WPAR ({0})'),instance_id=instance['hostname'])

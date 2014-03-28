@@ -30,7 +30,7 @@ class WparImage(object):
 
 	def __init__(self, image_meta=None):
 	
-		self.image_name = _get_image_name(image_meta)
+		self.image_name = self._get_image_name(image_meta)
 		self.image_type = None
 			
 
@@ -51,10 +51,15 @@ class WparImage(object):
 		image = image_service.show(context, image_id)
 		return image_id, image
 	
-	def get_image_url(self, context, image_href):
+	def get_image_iter(self, context, image_href):
 		if not image_href:
-			return None, {}
+			return None
 		(image_service, image_id) = glance.get_remote_image_service(context,image_href)
-		url = image_service.get_location(context, image_id)
-		return url
+		readiter = image_service.download(context, image_id)
+		return readiter
+	
+	def get_image_size(self, context, image_href):
+		image_id, metadata = self.get_image_info(context, image_href)
+		file_size = int(metadata['size'])
 		
+		return file_size

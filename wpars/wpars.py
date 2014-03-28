@@ -30,8 +30,8 @@ import time
 import uuid
 
 from flask import Flask, jsonify, request, make_response, session, abort, Response
-from tasks import image_create, image_inspect, host_network_devices, host_cpustats, host_status, host_stats, wpar_listwpar, wpar_listdetailswpar, build_cmd_line, wpar_mkwpar, wpar_check_task, wpar_rebootwpar, wpar_rmwpar, wpar_startwpar, wpar_stopwpar, wpar_restorewpar, wpar_savewpar, wpar_migwpar, wpar_syncwpar
-from utils import crossdomain
+from tasks import host_os_stats, image_create, image_inspect, host_network_devices, host_cpustats, host_status, host_stats, wpar_listwpar, wpar_listdetailswpar, build_cmd_line, wpar_mkwpar, wpar_check_task, wpar_rebootwpar, wpar_rmwpar, wpar_startwpar, wpar_stopwpar, wpar_restorewpar, wpar_savewpar, wpar_migwpar, wpar_syncwpar
+from utils import requires_auth, crossdomain, downloadChunks, download_file
 
 app = Flask(__name__)
 
@@ -63,7 +63,7 @@ Note: Compatible with AIX 6.1 and AIX 7.1
 """
 def _parsewpar_output(result):
 	data_list = result.splitlines()
-
+	
 	data_out = {}
 	main_key = ""
 	header_len=0
@@ -85,8 +85,8 @@ def _parsewpar_output(result):
 	reg_devexport=re.compile('^DEVICE EXPORTS$')
 	reg_kernext=re.compile('^KERNEL EXTENSIONS$')
 	# Extract 2nd line where Name and State are displayed
-	tmp=data_list[1].split('-')
 	
+	tmp=data_list[1].split('-')
 	logging.debug('In _parsewpar_output: tmp=%s', tmp)
 	
 	data_out.setdefault('name', tmp[0].rstrip())
@@ -280,21 +280,29 @@ def get_list(wpar_name):
 	"""
 	if wpar_name is None: 
 		data = {}
-		all = wpar_listwpar().rstrip().split('\n')
-		header = all[0][1:].split(':')
-		all.pop(0)
-		all.pop
-		for wpar in all:
-			values = wpar.split(':') 
-			data.update(dict(zip(header, values)))
+		all, err = wpar_listwpar()
+		if err == 0:
+			all.rstrip().split('\n')
+			header = all[0][1:].split(':')
+			all.pop(0)
+			all.pop
+			for wpar in all:
+				values = wpar.split(':') 
+				data.update(dict(zip(header, values)))
+		else:
+			data={}
 		return jsonify( { "wpars": [ data ] } )
 	else:
-		all = wpar_listdetailswpar(wpar_name).rstrip()
-		result = _parsewpar_output(all)
+		all, err = wpar_listdetailswpar(wpar_name)
+		if err == 0:
+			result = _parsewpar_output(all.rstrip())
+		else:
+			result = {}
 		return jsonify( { "wpars": result } )
 
 @app.route('/wparrip/api/wpars/create', methods = ['POST'])
 @crossdomain(origin='*')
+#@requires_auth
 def create_wpar():
 	"""
 	POST /wparrip/api/wpars/create 
@@ -316,7 +324,7 @@ def create_wpar():
 	"dupnameresolution":<yes|no>,
 	"rootvg":<yes|no>,
 	"start":<yes|no>
-	}
+	}, "image": { "name":<imagename>, "file":<filename>}
 	}
 	"""
 	if not request.json or not 'name' in request.json:
@@ -347,7 +355,7 @@ def create_wpar():
 	wpars.append(wpar)
 
 	resp = make_response(jsonify( { 'wpar': wpar } ), 201)
-	resp.headers['Location'] = "/wparrip/api/wpars/"+async_res.task_id
+	resp.headers['Location'] = "/wparrip/api/tasks/"+async_res.task_id
 	return resp
 
 @app.route('/wparrip/api/wpars/<wpar_name>', methods = ['PUT'])
@@ -405,7 +413,7 @@ def update_wpar(wpar_name):
 		'done': False
 	}
 	resp = make_response(jsonify( { 'wpar': wpar } ), 201)
-	resp.headers['Location'] = "/wparrip/api/wpars/"+async_res.task_id
+	resp.headers['Location'] = "/wparrip/api/tasks/"+async_res.task_id
 	return resp
 
 @app.route('/wparrip/api/wpars/<wpar_name>', methods = ['DELETE'])
@@ -419,7 +427,7 @@ def delete_wpar(wpar_name):
 	name = str(wpar_name)
 	async_res = wpar_rmwpar.delay( name )
 	resp = make_response(jsonify( { 'state': 'Deleting' } ), 201)
-	resp.headers['Location'] = "/wparrip/api/wpars/"+async_res.task_id
+	resp.headers['Location'] = "/wparrip/api/tasks/"+async_res.task_id
 	return resp
 
 @app.route('/wparrip/api/host', methods = ['GET'])
@@ -552,7 +560,7 @@ def create_image():
 
 @app.route('/wparrip/api/images/push', methods = ['POST'])
 @crossdomain(origin='*')
-def image_upload(image_id):
+def image_upload():
 	"""
 	Given an image_id (uuid format BUT NOT related to the one used by Glance
 	(will see if we would match them later on)), we upload the image to a
@@ -564,17 +572,35 @@ def image_upload(image_id):
 	data = request.get_json()
 	
 	glance = glance.GlanceStorage(None)
-	glance.put_content(image_local+'/'+data['name'],None)
-	return
+	glance.put_content(os.path.join(image_local,data['name']),None)
+	resp = make_response(jsonify( {'status':'Done'} ), 200)
+	return resp
 
 @app.route('/wparrip/api/images/pull', methods = ['POST'])
 @crossdomain(origin='*')
-def image_download(image_id):
+def image_download():
 	"""
-	The other way around... we download an image (tgz file for now) coming from
-	Glance. Once the imagedownloaded, it can be used by a WPAR...
+	The other way around... we download an image coming from
+	Glance (or another source __future__). 
+	Once done, it can be used to deploy a WPAR...
 	"""
-	return
+	ret_code = 404
+	logging.debug('In image_download')
+	print '------->'+str(request.headers)+'<------------'
+	#print '------->'+str(request.data)+'<------------'
+	local_filename=request.headers['X-Meta-Glance-Image-Id']
+	file = os.path.join(image_local,local_filename)
+	# At this step, we suppose that the Glance image format is known (TGZ is the default)
+	# __future__: extend this defaultvalue with ISO, and mksysb
+	if request.headers['Wparrip-Image-format'] == 'TGZ':
+		f = open(file, 'wb')
+		data = request.data
+		if data:
+			f.write(data)
+			f.close()
+			ret_code = 200
+	resp = make_response(jsonify( {'image':local_filename} ), ret_code)
+	return resp
 
 def _inspect_image(image_fullpath):
 	result, out = image_inspect(image_fullpath)
@@ -596,7 +622,7 @@ def _inspect_image(image_fullpath):
 			data = { 'image' : {
 				'name':image_fullpath,
 				'id': uuid.uuid4(),
-				'hypervisor': 'warrip',
+				'hypervisor': 'wparrip',
 				'type':'mksysb', 
 				'vg': data_list[0].split(":")[1].lstrip(' '),
 				'date': data_list[1].split(":")[1].lstrip(' '),
