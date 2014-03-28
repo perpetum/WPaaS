@@ -4,7 +4,7 @@ echo "This script installs the AIX box for Flask/Redis/Celery dev env."
 PROXY=xxxxxxxx:8080
 export http_proxy=$PROXY
 
-#Install all the RPMS needed
+#Install all the RPMS needed (www.perzl.org/aix/‎ or bullfreeware)
 rpm -ivh --nodeps gettext-0.17-8.aix6.1.ppc.rpm
 rpm -ivh \
 bash-4.2-7.aix6.1.ppc.rpm \
@@ -38,15 +38,15 @@ zlib-1.2.5-6.aix6.1.ppc.rpm
 virtualenv flask
 
 #Then Install Celery
-pip --proxy ecfrec.frec.bull.fr:8080 install -U celery
+pip --proxy <proxy>:8080 install -U celery
 
 #Then Install Sphinx (doc si besoin)
-pip --proxy ecfrec.frec.bull.fr:8080 install -U Sphinx
+pip --proxy <proxy>:8080 install -U Sphinx
 
 #Then prepare your env (update your shell startup script)
 export C_FORCE_ROOT=true
-export http_proxy=ecfrec.frec.bull.fr:8080
-export PATH=/home/misoard/flask/bin:$PATH
+export http_proxy=<proxy>
+export PATH=<home>/flask/bin:$PATH
 
 #To run Celery worker:
 cd $WPAR_ENV
